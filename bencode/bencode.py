@@ -1,24 +1,50 @@
-from bencode.exceptions import BencodeException
+class BencodeException(Exception):
+    pass
 
 
-def decode_integer(data: str):
+def decode_numeric_form(data: str, position = 0):
+
+
+def decode_integer(data: str, position=0):
     """
     Decodes a string into an integer. Bencode encodes an integer as i<number>e
     :param data: An integer in bencode mode
+    :param position: The position in which the parser should start
     :return: An integer in its decimal form
     """
     if len(data) == 0:
-        raise BencodeException("Decoding empty integer is undefined behaviour")
+        raise BencodeException("Decoding empty integer is undefined behaviour.")
 
-    if data[0] != 'i' or data[-1] != 'e':
+    if position > len(data):
+        raise BencodeException("Decoding pos word has no meaning.")
+
+    if data[position] != 'i':
         raise BencodeException("Decoding integer with invalid format for integers.")
 
-    try:
-        result = int(data[1:-1])
-    except Exception as e:
-        raise BencodeException(f"Tried to convert an invalid integer: {data[1:-1]}")
+    # Consume the 'i'
+    beginning = position
+    position += 1
 
-    return result
+    result = 0
+    valid = False
+    while position < len(data):
+
+        if data[position] == 'e':
+            valid = True
+            position += 1
+            break
+
+        elif "0" <= data[position] <= "9":
+            result = result * 10 + int(data[position])
+            position += 1
+
+        else:
+            raise BencodeException(f"Tried to convert an character in integer: {data}")
+
+    if not valid:
+        raise BencodeException(f"Couldn't find the end terminator in the string")
+
+    return result, position - beginning + 1
 
 
 def encode_integer(data: int):
@@ -30,10 +56,11 @@ def encode_integer(data: int):
     return 'i' + str(data) + 'e'
 
 
-def decode_string(data: str):
+def decode_string(data: str, position = 0):
     """
     Decodes a bencoded formatted string into its python form. Bencode algorithm encodes a string as <size>:data
     :param data: A bencoded formatted string
+    :param position: The position in which the parser should start
     :return: A string in its pythonic form
     """
     separator = data.find(':')
@@ -43,7 +70,7 @@ def decode_string(data: str):
 
     try:
         string_size = int(data[:separator])
-    except Exception as e:
+    except Exception:
         raise BencodeException(f"Something went wrong while parsing the size of the string: {data[:separator]}")
 
     if string_size < 0:
@@ -60,3 +87,19 @@ def encode_string(string: str):
     :return: A bencoded formatted string
     """
     return str(len(string)) + ":" + string
+
+
+def decode_list(data: str):
+    if len(data) == 0:
+        raise BencodeException("Decoding empty integer is undefined behaviour")
+
+    if data[0] != 'l' or data[-1] != 'e':
+        raise BencodeException("Decoding integer with invalid format for lists.")
+
+    position = 1
+    while data:
+
+        if data[position] == "i":
+
+
+decode_list("l4:spami42ee")

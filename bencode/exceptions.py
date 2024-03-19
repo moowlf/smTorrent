@@ -1,4 +1,0 @@
-
-
-class BencodeException(Exception):
-    pass
