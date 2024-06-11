@@ -37,6 +37,7 @@ class Torrent:
         self._metadata_infoHash = self._calculate_encoded_info_hash()
 
         self._pieces = [self._metadata.pieces[i:i + 20] for i in range(0, len(self._metadata.pieces), 20)]
+        self.data = []
 
         # Prepare all pieces to be downloaded for this torrent
         self.pieces_to_download = self._divide_into_blocks()
@@ -55,8 +56,9 @@ class Torrent:
         [worker.join() for worker in workers]
 
         with open(self._metadata.file_name, "wb") as file:
-            for piece in self._pieces:
-                file.write(piece)
+            self.data.sort(key=lambda x: x[0])
+            for piece in self.data:
+                file.write(piece[1])
 
     def _get_peers(self, own_peer_id: str):
 
@@ -77,7 +79,7 @@ class Torrent:
 
     def _download_from_peer(self, own_peer_id: str):
 
-        while self.pieces_to_download.not_empty:
+        while not self.pieces_to_download.empty():
             # Retrieve piece to be downloaded
             piece_to_download: Piece = self.pieces_to_download.get()
 
@@ -94,21 +96,25 @@ class Torrent:
             conn.send(handshake)
             _ = self._receive_data(conn, 256)
 
+            # Send interested
+            interested = connection.build_interested()
+            conn.send(interested)
+
             # From here onwards, we can receive some messages "out of order".
             current_state = "chocked"
 
             for block_piece in piece_to_download.blocks:
                 block_piece.data, current_state = self._download_state_machine(conn, block_piece, current_state)
-                print(block_piece.data)
 
             data = piece_to_download.blocks[0].data + piece_to_download.blocks[1].data
             res = sha1(data)
 
-            print(piece_to_download.hash.hex())
-            print(res.hexdigest())
+            if piece_to_download.hash.hex() != res.hexdigest():
+                self.pieces_to_download.put(piece_to_download)
+
+            self.data.append([piece_to_download.piece_id, data])
 
         return
-
 
     def _calculate_encoded_info_hash(self):
         info = {
@@ -179,7 +185,6 @@ class Torrent:
         offset = block_piece.block_id * block_length
         size = block_piece.block_size
 
-        print(f"Downloading {piece} -> {offset} -> {size}")
         data = connection.build_request_piece(piece, offset, size)
         already_request_piece = False
 
@@ -188,6 +193,7 @@ class Torrent:
             if not already_request_piece and current_state == "unchocked":
                 already_request_piece = True
                 conn.send(data)
+            time.sleep(2)
 
             answer = Torrent._receive_data(conn, block_length)
             _, bitfield, payload = connection.parse_peer_message(answer)
@@ -220,7 +226,6 @@ class Torrent:
 
             elif bitfield == 7:
                 print("received pieces message")
-                print(len(payload))
                 i, b, bl = connection.parse_piece(payload)
                 return bl, current_state
 
