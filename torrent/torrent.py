@@ -2,11 +2,12 @@ import dataclasses
 import math
 import threading
 import time
-
+import socket
 import requests
+
+from typing import List
 from bencode import bencode
 from hashlib import sha1
-import socket
 from torrent import connection
 from queue import Queue
 
@@ -18,15 +19,24 @@ class BlockPiece:
     piece_id: int
     block_id: int
     block_size: int
+    data: []
+
+
+@dataclasses.dataclass
+class Piece:
+    piece_id: int
+    hash: bytearray
+    blocks: List[BlockPiece]
 
 
 class Torrent:
 
     def __init__(self, file_data):
         self._peers = Queue()
-        self._pieces = []
         self._metadata: TorrentInformation = file_data
         self._metadata_infoHash = self._calculate_encoded_info_hash()
+
+        self._pieces = [self._metadata.pieces[i:i + 20] for i in range(0, len(self._metadata.pieces), 20)]
 
         # Prepare all pieces to be downloaded for this torrent
         self.pieces_to_download = self._divide_into_blocks()
@@ -67,18 +77,11 @@ class Torrent:
 
     def _download_from_peer(self, own_peer_id: str):
 
-        # Prepare the blocks to be downloaded
-        block_length = 2 ** 14
+        while self.pieces_to_download.not_empty:
+            # Retrieve piece to be downloaded
+            piece_to_download: Piece = self.pieces_to_download.get()
 
-        while not self.pieces_to_download.empty():
-
-            if self._peers.empty():
-                continue
-
-            # Retrieve the piece to download
-            piece_to_download: BlockPiece = self.pieces_to_download.get()
-
-            # Get the peer IP
+            # Retrieve IP to connect (assuming every IP has all files)
             peer = self._peers.get()
             peer_ip, peer_port = peer["ip"], peer["port"]
 
@@ -89,70 +92,23 @@ class Torrent:
             # Send Handshake and receive
             handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
             conn.send(handshake)
-            answer = conn.recv(256)
-
-            # Send that we're interested in this piece
-            conn.send(connection.build_interested())
+            _ = self._receive_data(conn, 256)
 
             # From here onwards, we can receive some messages "out of order".
             current_state = "chocked"
 
-            while True:
-                
-                answer = bytearray()
-                while True:
-                    part = conn.recv(1024)
-                    answer += part
-                    if len(part) < 1024:
-                        break
-                _, bitfield, payload = connection.parse_peer_message(answer)
+            for block_piece in piece_to_download.blocks:
+                block_piece.data, current_state = self._download_state_machine(conn, block_piece, current_state)
+                print(block_piece.data)
 
-                # Keep alive message
-                if _ == 0:
-                    print("received keep alive")
+            data = piece_to_download.blocks[0].data + piece_to_download.blocks[1].data
+            res = sha1(data)
 
-                # Chocked message
-                if bitfield == 0:
-                    print("received chocked message")
-                    current_state = "chocked"
-                elif bitfield == 1:
-                    print("received unchocked message")
-                    current_state = "unchocked"
-                elif bitfield == 2:
-                    print("received interested message")
-                elif bitfield == 3:
-                    print("received not interested message")
-                elif bitfield == 4:
-                    print("received have message")
-                elif bitfield == 5:
-                    print("received bitfield message")
-
-                elif bitfield == 6:
-                    print("received request message")
-
-                elif bitfield == 7:
-                    print("received pieces message")
-                    print(len(payload))
-                    i, b, bl = connection.parse_piece(payload)
-                    self._pieces.append(bl)
-                    break
-
-                elif bitfield == 8:
-                    print("received cancel message")
-
-                if current_state != "unchocked":
-                    continue
-
-                piece = piece_to_download.piece_id
-                offset = piece_to_download.block_id * (2 ** 14)
-                size = piece_to_download.block_size
-
-                print(f"Downloading {piece} -> {offset} -> {size}")
-                data = connection.build_request_piece(piece, offset, size)
-                conn.send(data)
-                time.sleep(2)
+            print(piece_to_download.hash.hex())
+            print(res.hexdigest())
 
         return
+
 
     def _calculate_encoded_info_hash(self):
         info = {
@@ -177,6 +133,7 @@ class Torrent:
         while total_file_left > 0:
             # We now have a piece to deal with. A piece will be divided into multiple blocks of a specified length by
             # the tracker
+            piece = Piece(piece_id=piece_id, hash=self._pieces[piece_id], blocks=[])
             piece_size = min(self._metadata.file_piece_length, total_file_left)
             total_file_left -= piece_size
 
@@ -185,13 +142,89 @@ class Torrent:
             block_id = 0
 
             while blocks_size < piece_size:
-                current_block_size = min(2**14, piece_size - blocks_size)
-                q.put(BlockPiece(piece_id=piece_id, block_id=block_id, block_size=current_block_size))
+                current_block_size = min(2 ** 14, piece_size - blocks_size)
+                piece.blocks.append(
+                    BlockPiece(piece_id=piece_id, block_id=block_id, block_size=current_block_size, data=b""))
                 blocks_size += current_block_size
                 block_id += 1
 
             # Update piece id
             piece_id += 1
-            pass
+
+            # Add to queue
+            q.put(piece)
 
         return q
+
+    @staticmethod
+    def _receive_data(connection_socket, size_buffer):
+        answer = bytearray()
+        while True:
+            downloaded_buffer = connection_socket.recv(size_buffer)
+            answer += downloaded_buffer
+
+            if len(downloaded_buffer) < size_buffer:
+                break
+
+        return answer
+
+    @staticmethod
+    def _download_state_machine(conn, block_piece: BlockPiece, current_state):
+
+        # Prepare the blocks to be downloaded
+        block_length = 2 ** 14
+
+        # Specific Request
+        piece = block_piece.piece_id
+        offset = block_piece.block_id * block_length
+        size = block_piece.block_size
+
+        print(f"Downloading {piece} -> {offset} -> {size}")
+        data = connection.build_request_piece(piece, offset, size)
+        already_request_piece = False
+
+        while True:
+
+            if not already_request_piece and current_state == "unchocked":
+                already_request_piece = True
+                conn.send(data)
+
+            answer = Torrent._receive_data(conn, block_length)
+            _, bitfield, payload = connection.parse_peer_message(answer)
+
+            # Keep alive message
+            if _ == 0:
+                print("received keep alive")
+                continue
+
+            # Chocked message
+            if bitfield == 0:
+                print("received chocked message")
+                current_state = "chocked"
+            elif bitfield == 1:
+                print("received unchocked message")
+                current_state = "unchocked"
+            elif bitfield == 2:
+                print("received interested message")
+            elif bitfield == 3:
+                print("received not interested message")
+            elif bitfield == 4:
+                print("received have message")
+            elif bitfield == 5:
+                print("received bitfield message")
+                # Send that we're interested in this piece
+                conn.send(connection.build_interested())
+                continue
+            elif bitfield == 6:
+                print("received request message")
+
+            elif bitfield == 7:
+                print("received pieces message")
+                print(len(payload))
+                i, b, bl = connection.parse_piece(payload)
+                return bl, current_state
+
+            elif bitfield == 8:
+                print("received cancel message")
+
+        return b"", current_state
