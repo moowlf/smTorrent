@@ -1,4 +1,5 @@
 import dataclasses
+import queue
 import threading
 import time
 import socket
@@ -8,7 +9,7 @@ from typing import List
 from bencode import bencode
 from hashlib import sha1
 from torrent import connection
-from queue import Queue
+from queue import Queue, LifoQueue
 
 from torrent.TorrentInformation import TorrentInformation
 
@@ -18,7 +19,8 @@ class BlockPiece:
     piece_id: int
     block_id: int
     block_size: int
-    data: []
+    data: List
+    start_position: int
 
 
 @dataclasses.dataclass
@@ -42,6 +44,12 @@ class Torrent:
         self.pieces_to_download = self._divide_into_blocks()
         self._to_complete_pieces = self.pieces_to_download.qsize()
 
+        self.file_mutex = threading.Lock()
+
+        # create file
+        with open(self._metadata.file_name, "wb") as f:
+            f.truncate(self._metadata.file_length)
+
     def is_complete(self):
         return self._to_complete_pieces == 0
 
@@ -56,31 +64,43 @@ class Torrent:
         # End threads
         tracker_comm.join()
 
-        with open(self._metadata.file_name, "wb") as file:
-            self.data.sort(key=lambda x: x[0])
-            for piece in self.data:
-                file.write(piece[1])
-
     def _download(self, own_peer_id):
 
         threads = []
+
         while not self.is_complete():
 
+            """
+            Try to retrieve a peer ip
+            """
             try:
                 peer = self._peers.get(timeout=5)
-                work = self.pieces_to_download.get(timeout=5)
-            except Exception:
+            except Exception as e:
                 continue
 
+            """
+            Get the actual work to be done
+            """
+            try:
+                work = self.pieces_to_download.get(timeout=5)
+            except queue.Empty:
+                self._peers.put(peer)
+                continue
+
+            """
+            We have reached a valid state for download to start
+            """
             threads.append(
                 threading.Thread(target=self._download_from_peer, args=(own_peer_id, peer, work), name=peer["ip"]))
             threads[-1].start()
+            #time.sleep(1)
+            #break
 
         [thread.join() for thread in threads]
 
     def _get_peers(self, own_peer_id: str):
 
-        while not self.pieces_to_download.empty():
+        while not self.is_complete():
             # Query the tracker
             params = connection.build_peer_request(self._metadata_infoHash, own_peer_id)
             req = requests.get(self._metadata.announce_url, params)
@@ -100,40 +120,69 @@ class Torrent:
 
     def _download_from_peer(self, own_peer_id: str, peer: dict, piece_to_download: Piece):
 
-        # Retrieve IP to connect (assuming every IP has all files)
-        peer_ip, peer_port = peer["ip"], peer["port"]
+        try:
+            # Retrieve IP to connect (assuming every IP has all files)
+            peer_ip, peer_port = peer["ip"], peer["port"]
 
-        # Start the connection with chosen peer
-        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        conn.connect((peer_ip, peer_port))
-        print(f"> Connected to {peer_ip}:{peer_port}")
+            # Start the connection with chosen peer
+            # Determine if the IP address is IPv4 or IPv6
+            try:
+                socket.inet_pton(socket.AF_INET, peer_ip)
+                family = socket.AF_INET
+            except socket.error:
+                try:
+                    socket.inet_pton(socket.AF_INET6, peer_ip)
+                    family = socket.AF_INET6
+                except socket.error:
+                    raise ValueError("Invalid IP address")
 
-        # Send Handshake and receive
-        handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
-        conn.send(handshake)
-        _ = self._receive_data(conn, 256)
+            conn = socket.socket(family, socket.SOCK_STREAM)
+            conn.connect((peer_ip, peer_port))
+            print(f"> Connected to {peer_ip}:{peer_port}")
 
-        # Send interested
-        interested = connection.build_interested()
-        conn.send(interested)
+            # Send Handshake and receive
+            handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
+            conn.send(handshake)
+            _ = self._receive_data(conn, 256)
 
-        # From here onwards, we can receive some messages "out of order".
-        current_state = "chocked"
+            # Send interested
+            interested = connection.build_interested()
+            conn.send(interested)
 
-        for block_piece in piece_to_download.blocks:
-            block_piece.data, current_state = self._download_state_machine(conn, block_piece, current_state)
+            # From here onwards, we can receive some messages "out of order".
+            current_state = "chocked"
+            data = b''
+            for block_piece in piece_to_download.blocks:
+                block_piece.data, current_state = self._download_state_machine(conn, block_piece, current_state)
+                data += block_piece.data
 
-        data = piece_to_download.blocks[0].data + piece_to_download.blocks[1].data
-        res = sha1(data)
+            res = sha1(data)
 
-        print(res.hexdigest(), piece_to_download.hash.hex())
-        if piece_to_download.hash.hex() != res.hexdigest():
+            print(res.hexdigest(), piece_to_download.hash.hex())
+            if piece_to_download.hash.hex() != res.hexdigest():
+                print(f"{peer_ip} : Hashes do not match")
+                self.pieces_to_download.put(piece_to_download)
+                self._peers.put(peer)
+                return
+
+            with open(self._metadata.file_name, "r+b") as file:
+
+                self.file_mutex.acquire()
+                try:
+                    for bl in piece_to_download.blocks:
+                        file.seek(bl.start_position)
+                        file.write(bl.data)
+                finally:
+                    self.file_mutex.release()
+
+            self._peers.put(peer)
+            self._to_complete_pieces -= 1
+            conn.close()
+        except Exception as e:
+            print(f"Something failed : {peer_ip} {e}")
             self.pieces_to_download.put(piece_to_download)
-            return
-
-        print("> Hashes matched")
-        self.data.append([piece_to_download.piece_id, data])
-        self._to_complete_pieces -= 1
+            self._peers.put(peer)
+            conn.close()
 
     def _calculate_encoded_info_hash(self):
         info = {
@@ -154,6 +203,7 @@ class Torrent:
 
         total_file_left = self._metadata.file_length
         piece_id = 0
+        current_position = 0
 
         while total_file_left > 0:
             # We now have a piece to deal with. A piece will be divided into multiple blocks of a specified length by
@@ -169,9 +219,12 @@ class Torrent:
             while blocks_size < piece_size:
                 current_block_size = min(2 ** 14, piece_size - blocks_size)
                 piece.blocks.append(
-                    BlockPiece(piece_id=piece_id, block_id=block_id, block_size=current_block_size, data=b""))
+                    BlockPiece(piece_id=piece_id, start_position=current_position, block_id=block_id,
+                               block_size=current_block_size,
+                               data=b""))
                 blocks_size += current_block_size
                 block_id += 1
+                current_position += current_block_size
 
             # Update piece id
             piece_id += 1
@@ -182,14 +235,20 @@ class Torrent:
         return q
 
     @staticmethod
-    def _receive_data(connection_socket, size_buffer):
-        answer = bytearray()
-        while True:
-            downloaded_buffer = connection_socket.recv(size_buffer)
-            answer += downloaded_buffer
+    def _receive_data(connection_socket, size_buffer=None):
 
-            if len(downloaded_buffer) < size_buffer:
-                break
+        # We know the size is enough
+        if size_buffer is not None:
+            downloaded_buffer = connection_socket.recv(size_buffer)
+            return downloaded_buffer
+
+        # the size comes in the first 4 bytes
+        answer = connection_socket.recv(1024)
+        size = int.from_bytes(answer[:4], byteorder='big')
+
+        while len(answer) < size:
+                answer += connection_socket.recv(size - len(answer))
+
         return answer
 
     @staticmethod
@@ -204,6 +263,7 @@ class Torrent:
         size = block_piece.block_size
 
         data = connection.build_request_piece(piece, offset, size)
+
         already_request_piece = False
 
         while True:
@@ -211,15 +271,10 @@ class Torrent:
             if not already_request_piece and current_state == "unchocked":
                 already_request_piece = True
                 conn.send(data)
-                time.sleep(2)
 
-            answer = Torrent._receive_data(conn, block_length)
+            answer = Torrent._receive_data(conn)
+
             _, bitfield, payload = connection.parse_peer_message(answer)
-
-            # Keep alive message
-            if _ == 0:
-                print("received keep alive")
-                continue
 
             # Chocked message
             if bitfield == 0:
@@ -233,6 +288,7 @@ class Torrent:
             elif bitfield == 7:
                 i, b, bl = connection.parse_piece(payload)
                 return bl, current_state
-
+            else:
+                print(f"Request unknown: {bitfield}")
 
         return b"", current_state
