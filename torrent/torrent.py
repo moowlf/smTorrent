@@ -9,10 +9,10 @@ from typing import List
 from bencode import bencode
 from hashlib import sha1
 from torrent import connection
-from queue import Queue, LifoQueue
+from queue import Queue
 
 from torrent.TorrentInformation import TorrentInformation
-
+import torrent.Network as Network
 
 @dataclasses.dataclass
 class BlockPiece:
@@ -90,11 +90,8 @@ class Torrent:
             """
             We have reached a valid state for download to start
             """
-            threads.append(
-                threading.Thread(target=self._download_from_peer, args=(own_peer_id, peer, work), name=peer["ip"]))
+            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer, work), name=peer["ip"]))
             threads[-1].start()
-            #time.sleep(1)
-            #break
 
         [thread.join() for thread in threads]
 
@@ -117,72 +114,6 @@ class Torrent:
             # Sleep
             print(f"Peer request: Waiting for {answer['interval']}s")
             time.sleep(answer["interval"])
-
-    def _download_from_peer(self, own_peer_id: str, peer: dict, piece_to_download: Piece):
-
-        try:
-            # Retrieve IP to connect (assuming every IP has all files)
-            peer_ip, peer_port = peer["ip"], peer["port"]
-
-            # Start the connection with chosen peer
-            # Determine if the IP address is IPv4 or IPv6
-            try:
-                socket.inet_pton(socket.AF_INET, peer_ip)
-                family = socket.AF_INET
-            except socket.error:
-                try:
-                    socket.inet_pton(socket.AF_INET6, peer_ip)
-                    family = socket.AF_INET6
-                except socket.error:
-                    raise ValueError("Invalid IP address")
-
-            conn = socket.socket(family, socket.SOCK_STREAM)
-            conn.connect((peer_ip, peer_port))
-            print(f"> Connected to {peer_ip}:{peer_port}")
-
-            # Send Handshake and receive
-            handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
-            conn.send(handshake)
-            _ = self._receive_data(conn, 256)
-
-            # Send interested
-            interested = connection.build_interested()
-            conn.send(interested)
-
-            # From here onwards, we can receive some messages "out of order".
-            current_state = "chocked"
-            data = b''
-            for block_piece in piece_to_download.blocks:
-                block_piece.data, current_state = self._download_state_machine(conn, block_piece, current_state)
-                data += block_piece.data
-
-            res = sha1(data)
-
-            print(res.hexdigest(), piece_to_download.hash.hex())
-            if piece_to_download.hash.hex() != res.hexdigest():
-                print(f"{peer_ip} : Hashes do not match")
-                self.pieces_to_download.put(piece_to_download)
-                self._peers.put(peer)
-                return
-
-            with open(self._metadata.file_name, "r+b") as file:
-
-                self.file_mutex.acquire()
-                try:
-                    for bl in piece_to_download.blocks:
-                        file.seek(bl.start_position)
-                        file.write(bl.data)
-                finally:
-                    self.file_mutex.release()
-
-            self._peers.put(peer)
-            self._to_complete_pieces -= 1
-            conn.close()
-        except Exception as e:
-            print(f"Something failed : {peer_ip} {e}")
-            self.pieces_to_download.put(piece_to_download)
-            self._peers.put(peer)
-            conn.close()
 
     def _calculate_encoded_info_hash(self):
         info = {
@@ -234,61 +165,98 @@ class Torrent:
 
         return q
 
-    @staticmethod
-    def _receive_data(connection_socket, size_buffer=None):
+    def _download_piece(self, own_peer_id, peer, piece: Piece):
 
-        # We know the size is enough
-        if size_buffer is not None:
-            downloaded_buffer = connection_socket.recv(size_buffer)
-            return downloaded_buffer
+        # Retrieve IP to connect (assuming every IP has all files)
+        peer_ip, peer_port = peer["ip"], peer["port"]
 
-        # the size comes in the first 4 bytes
-        answer = connection_socket.recv(1024)
-        size = int.from_bytes(answer[:4], byteorder='big')
+        # Get Connection
+        conn = Network.get_socket(peer_ip)
+        conn.connect((peer_ip, peer_port))
+        print(f"> Connected to {peer_ip}:{peer_port}")
 
-        while len(answer) < size:
-                answer += connection_socket.recv(size - len(answer))
+        # Send Handshake and receive
+        handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
+        Network.send_data(conn, handshake)
+        _ = Network.receive_data(conn, 256)
 
-        return answer
+        # Send interested
+        interested = connection.build_interested()
+        Network.send_data(conn, interested)
 
-    @staticmethod
-    def _download_state_machine(conn, block_piece: BlockPiece, current_state):
+        # Download Piece
+        total_piece = b""
+        current_state = "chocked"
 
-        # Prepare the blocks to be downloaded
-        block_length = 2 ** 14
+        for block_pieces in piece.blocks:
+            
+            # Helper variables
+            piece_id = block_pieces.piece_id
+            piece_offset = block_pieces.block_id * 2**14
+            piece_size = block_pieces.block_size
 
-        # Specific Request
-        piece = block_piece.piece_id
-        offset = block_piece.block_id * block_length
-        size = block_piece.block_size
+            # Build piece request
+            piece_req = connection.build_request_piece(piece_id, piece_offset, piece_size)
 
-        data = connection.build_request_piece(piece, offset, size)
+            # Completed
+            is_completed = False
+            requested_piece = False
+            
+            while not is_completed:
 
-        already_request_piece = False
+                if not requested_piece and current_state != "chocked":
+                    requested_piece = True
+                    Network.send_data(conn, piece_req)
+                    continue
+                
+                # here all the received messages are prefixed with the length of the message
+                # so, we are not passing any buffer size
+                received_data = Network.receive_data(conn)
+                length, bitfield, payload = connection.parse_peer_message(received_data)
 
-        while True:
 
-            if not already_request_piece and current_state == "unchocked":
-                already_request_piece = True
-                conn.send(data)
+                # Deal with the received data
+                if length == 0:
+                    continue
+                    
+                if bitfield == 0:
+                    current_state = "chocked"
+                
+                elif bitfield == 1:
+                    current_state = "unchocked"
+                
+                elif bitfield == 5:
+                    Network.send_data(conn, connection.build_interested())
+                
+                elif bitfield == 7:
+                    i, b, bl = connection.parse_piece(payload)
+                    total_piece += bl
+                
+                else:
+                    print(f"Unknown bitfield {bitfield} received")
 
-            answer = Torrent._receive_data(conn)
+        # Downloaded all the blocks from the piece
+        hash = sha1(total_piece)
 
-            _, bitfield, payload = connection.parse_peer_message(answer)
+        print(hash.hexdigest(), piece.hash.hex())
+        if piece.hash.hex() != hash.hexdigest():
+            print(f"{peer_ip} : Hashes do not match")
+            self.pieces_to_download.put(piece)
+            self._peers.put(peer)
+            return
 
-            # Chocked message
-            if bitfield == 0:
-                current_state = "chocked"
-            elif bitfield == 1:
-                current_state = "unchocked"
-            elif bitfield == 5:
-                # Send that we're interested in this piece
-                conn.send(connection.build_interested())
-                continue
-            elif bitfield == 7:
-                i, b, bl = connection.parse_piece(payload)
-                return bl, current_state
-            else:
-                print(f"Request unknown: {bitfield}")
+        with open(self._metadata.file_name, "r+b") as file:
 
-        return b"", current_state
+                self.file_mutex.acquire()
+                try:
+                    for bl in piece_to_download.blocks:
+                        file.seek(bl.start_position)
+                        file.write(bl.data)
+                finally:
+                    self.file_mutex.release()
+
+        self._peers.put(peer)
+        self._to_complete_pieces -= 1
+        conn.close()
+
+
