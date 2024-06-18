@@ -17,7 +17,12 @@ def get_socket(ip_address):
 
 
 def send_data(conn, data):
-    conn.send(data)
+
+    bytes_to_send = len(data)
+    sent = 0
+
+    while sent < bytes_to_send:
+        sent += conn.send(data[sent:])
 
 
 def receive_data(conn, buffer_size=None):

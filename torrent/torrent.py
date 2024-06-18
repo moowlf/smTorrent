@@ -169,94 +169,97 @@ class Torrent:
 
     def _download_piece(self, own_peer_id, peer, piece: Piece):
 
-        # Retrieve IP to connect (assuming every IP has all files)
-        peer_ip, peer_port = peer["ip"], peer["port"]
+        try:
+            # Retrieve IP to connect (assuming every IP has all files)
+            peer_ip, peer_port = peer["ip"], peer["port"]
 
-        # Get Connection
-        conn = Network.get_socket(peer_ip)
-        conn.connect((peer_ip, peer_port))
-        print(f"> Connected to {peer_ip}:{peer_port}")
+            # Get Connection
+            conn = Network.get_socket(peer_ip)
+            conn.connect((peer_ip, peer_port))
+            print(f"> Connected to {peer_ip}:{peer_port}")
 
-        # Send Handshake and receive
-        handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
-        Network.send_data(conn, handshake)
-        _ = Network.receive_data(conn, 256)
+            # Send Handshake and receive
+            handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
+            Network.send_data(conn, handshake)
+            _ = Network.receive_data(conn, 256)
 
-        # Send interested
-        interested = connection.build_interested()
-        Network.send_data(conn, interested)
+            # Send interested
+            interested = connection.build_interested()
+            Network.send_data(conn, interested)
 
-        # Download Piece
-        total_piece = b""
-        current_state = "chocked"
+            # Download Piece
+            total_piece = b""
+            current_state = "chocked"
 
-        for block_pieces in piece.blocks:
+            for block_pieces in piece.blocks:
 
-            # Helper variables
-            piece_id = block_pieces.piece_id
-            piece_offset = block_pieces.block_id * 2 ** 14
-            piece_size = block_pieces.block_size
+                # Helper variables
+                piece_id = block_pieces.piece_id
+                piece_offset = block_pieces.block_id * 2 ** 14
+                piece_size = block_pieces.block_size
 
-            # Build piece request
-            piece_req = connection.build_request_piece(piece_id, piece_offset, piece_size)
+                # Build piece request
+                piece_req = connection.build_request_piece(piece_id, piece_offset, piece_size)
 
-            # Completed
-            is_completed = False
-            requested_piece = False
+                # Completed
+                is_completed = False
+                requested_piece = False
 
-            while not is_completed:
+                while not is_completed:
 
-                if not requested_piece:
-                    requested_piece = True
-                    Network.send_data(conn, piece_req)
-                    continue
+                    if not requested_piece:
+                        requested_piece = True
+                        Network.send_data(conn, piece_req)
+                        continue
 
-                # here all the received messages are prefixed with the length of the message
-                # so, we are not passing any buffer size
-                received_data = Network.receive_data(conn)
-                length, bitfield, payload = connection.parse_peer_message(received_data)
+                    # here all the received messages are prefixed with the length of the message
+                    # so, we are not passing any buffer size
+                    received_data = Network.receive_data(conn)
+                    length, bitfield, payload = connection.parse_peer_message(received_data)
 
-                # Deal with the received data
-                if length == 0:
-                    continue
+                    # Deal with the received data
+                    if length == 0:
+                        continue
 
-                if bitfield == 0:
-                    current_state = "chocked"
+                    if bitfield == 0:
+                        current_state = "chocked"
 
-                elif bitfield == 1:
-                    current_state = "unchocked"
+                    elif bitfield == 1:
+                        current_state = "unchocked"
 
-                elif bitfield == 5:
-                    continue
+                    elif bitfield == 5:
+                        continue
 
-                elif bitfield == 7:
-                    i, b, bl = connection.parse_piece(payload)
-                    total_piece += bl
-                    break
+                    elif bitfield == 7:
+                        i, b, bl = connection.parse_piece(payload)
+                        total_piece += bl
+                        break
 
-                else:
-                    print(f"Unknown bitfield {bitfield} received")
+                    else:
+                        print(f"Unknown bitfield {bitfield} received")
 
-        # Downloaded all the blocks from the piece
-        hash = sha1(total_piece)
+            # Downloaded all the blocks from the piece
+            hash = sha1(total_piece)
 
-        print(hash.hexdigest(), piece.hash.hex())
-        if piece.hash.hex() != hash.hexdigest():
-            print(f"{peer_ip} : Hashes do not match")
-            self.pieces_to_download.put(piece)
+            print(hash.hexdigest(), piece.hash.hex())
+            if piece.hash.hex() != hash.hexdigest():
+                print(f"{peer_ip} : Hashes do not match")
+                self.pieces_to_download.put(piece)
+                self._peers.put(peer)
+                return
+
+            with open(self._metadata.file_name, "r+b") as file:
+
+                self.file_mutex.acquire()
+                try:
+                    for bl in piece.blocks:
+                        file.seek(bl.start_position)
+                        file.write(bl.data)
+                finally:
+                    self.file_mutex.release()
+
             self._peers.put(peer)
-            return
-
-        with open(self._metadata.file_name, "r+b") as file:
-
-            self.file_mutex.acquire()
-            try:
-                for bl in piece.blocks:
-                    file.seek(bl.start_position)
-                    file.write(bl.data)
-            finally:
-                self.file_mutex.release()
-
-        self._peers.put(peer)
-        self._to_complete_pieces -= 1
-        conn.close()
+            self._to_complete_pieces -= 1
+            conn.close()
+        except Exception as e:
+            print(e)
