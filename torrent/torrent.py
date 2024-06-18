@@ -14,6 +14,7 @@ from queue import Queue
 from torrent.TorrentInformation import TorrentInformation
 import torrent.Network as Network
 
+
 @dataclasses.dataclass
 class BlockPiece:
     piece_id: int
@@ -90,7 +91,8 @@ class Torrent:
             """
             We have reached a valid state for download to start
             """
-            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer, work), name=peer["ip"]))
+            threads.append(
+                threading.Thread(target=self._download_piece, args=(own_peer_id, peer, work), name=peer["ip"]))
             threads[-1].start()
 
         [thread.join() for thread in threads]
@@ -189,10 +191,10 @@ class Torrent:
         current_state = "chocked"
 
         for block_pieces in piece.blocks:
-            
+
             # Helper variables
             piece_id = block_pieces.piece_id
-            piece_offset = block_pieces.block_id * 2**14
+            piece_offset = block_pieces.block_id * 2 ** 14
             piece_size = block_pieces.block_size
 
             # Build piece request
@@ -201,37 +203,37 @@ class Torrent:
             # Completed
             is_completed = False
             requested_piece = False
-            
+
             while not is_completed:
 
-                if not requested_piece and current_state != "chocked":
+                if not requested_piece:
                     requested_piece = True
                     Network.send_data(conn, piece_req)
                     continue
-                
+
                 # here all the received messages are prefixed with the length of the message
                 # so, we are not passing any buffer size
                 received_data = Network.receive_data(conn)
                 length, bitfield, payload = connection.parse_peer_message(received_data)
 
-
                 # Deal with the received data
                 if length == 0:
                     continue
-                    
+
                 if bitfield == 0:
                     current_state = "chocked"
-                
+
                 elif bitfield == 1:
                     current_state = "unchocked"
-                
+
                 elif bitfield == 5:
-                    Network.send_data(conn, connection.build_interested())
-                
+                    continue
+
                 elif bitfield == 7:
                     i, b, bl = connection.parse_piece(payload)
                     total_piece += bl
-                
+                    break
+
                 else:
                     print(f"Unknown bitfield {bitfield} received")
 
@@ -247,16 +249,14 @@ class Torrent:
 
         with open(self._metadata.file_name, "r+b") as file:
 
-                self.file_mutex.acquire()
-                try:
-                    for bl in piece_to_download.blocks:
-                        file.seek(bl.start_position)
-                        file.write(bl.data)
-                finally:
-                    self.file_mutex.release()
+            self.file_mutex.acquire()
+            try:
+                for bl in piece.blocks:
+                    file.seek(bl.start_position)
+                    file.write(bl.data)
+            finally:
+                self.file_mutex.release()
 
         self._peers.put(peer)
         self._to_complete_pieces -= 1
         conn.close()
-
-

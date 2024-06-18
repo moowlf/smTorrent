@@ -27,7 +27,7 @@ def receive_data(conn, buffer_size=None):
         return downloaded_buffer
 
     # the size comes in the first 4 bytes
-    answer = conn.recv(4)
+    answer = conn.recv(1024)
     size = int.from_bytes(answer[:4], byteorder='big')
 
     while len(answer) < size:
