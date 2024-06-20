@@ -2,7 +2,6 @@ import dataclasses
 import queue
 import threading
 import time
-import socket
 import requests
 
 from typing import List
@@ -12,7 +11,7 @@ from torrent import connection
 from queue import Queue
 
 from torrent.TorrentInformation import TorrentInformation
-import torrent.Network as Network
+from torrent.Network import Network
 
 
 @dataclasses.dataclass
@@ -176,16 +175,17 @@ class Torrent:
             # Get Connection
             conn = Network.get_socket(peer_ip)
             conn.connect((peer_ip, peer_port))
+            network = Network()
             print(f"> Connected to {peer_ip}:{peer_port}")
 
             # Send Handshake and receive
             handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
-            Network.send_data(conn, handshake)
-            _ = Network.receive_data(conn, 256)
+            network.send_data(conn, handshake)
+            _ = network.receive_data_with_length(conn, len(handshake))
 
             # Send interested
             interested = connection.build_interested()
-            Network.send_data(conn, interested)
+            network.send_data(conn, interested)
 
             # Download Piece
             total_piece = b""
@@ -207,14 +207,14 @@ class Torrent:
 
                 while not is_completed:
 
-                    if not requested_piece:
+                    if not requested_piece  and current_state != "chocked":
                         requested_piece = True
-                        Network.send_data(conn, piece_req)
+                        network.send_data(conn, piece_req)
                         continue
 
                     # here all the received messages are prefixed with the length of the message
                     # so, we are not passing any buffer size
-                    received_data = Network.receive_data(conn)
+                    received_data = network.receive_data(conn)
                     length, bitfield, payload = connection.parse_peer_message(received_data)
 
                     # Deal with the received data
