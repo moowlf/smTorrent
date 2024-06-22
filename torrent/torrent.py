@@ -34,10 +34,10 @@ class Torrent:
 
     def __init__(self, file_data):
         self._peers = Queue()
-        self._metadata: TorrentInformation = file_data
+        self._metadata = file_data
 
-        self._pieces = [self._metadata.pieces[i:i + 20] for i in range(0, len(self._metadata.pieces), 20)]
-        self.data = []
+        # Create files to be downloaded
+        self._create_files()
 
         # Prepare all pieces to be downloaded for this torrent
         self.pieces_to_download = self._divide_into_blocks()
@@ -45,7 +45,8 @@ class Torrent:
 
         self.file_mutex = threading.Lock()
 
-        # create file
+
+    def _create_files(self):
         with open(self._metadata.name(), "wb") as f:
             f.truncate(self._metadata.file_length())
 
@@ -131,7 +132,7 @@ class Torrent:
         while total_file_left > 0:
             # We now have a piece to deal with. A piece will be divided into multiple blocks of a specified length by
             # the tracker
-            piece = Piece(piece_id=piece_id, hash=self._pieces[piece_id], blocks=[])
+            piece = Piece(piece_id=piece_id, hash=self._metadata.piece(piece_id), blocks=[])
             piece_size = min(self._metadata.piece_length(), total_file_left)
             total_file_left -= piece_size
 
