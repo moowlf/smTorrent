@@ -35,7 +35,6 @@ class Torrent:
     def __init__(self, file_data):
         self._peers = Queue()
         self._metadata: TorrentInformation = file_data
-        self._metadata_infoHash = self._calculate_encoded_info_hash()
 
         self._pieces = [self._metadata.pieces[i:i + 20] for i in range(0, len(self._metadata.pieces), 20)]
         self.data = []
@@ -47,8 +46,8 @@ class Torrent:
         self.file_mutex = threading.Lock()
 
         # create file
-        with open(self._metadata.file_name, "wb") as f:
-            f.truncate(self._metadata.file_length)
+        with open(self._metadata.name(), "wb") as f:
+            f.truncate(self._metadata.file_length())
 
     def is_complete(self):
         return self._to_complete_pieces == 0
@@ -90,18 +89,20 @@ class Torrent:
             """
             We have reached a valid state for download to start
             """
-            threads.append(
-                threading.Thread(target=self._download_piece, args=(own_peer_id, peer, work), name=peer["ip"]))
+            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer, work), name=peer["ip"]))
             threads[-1].start()
 
         [thread.join() for thread in threads]
 
     def _get_peers(self, own_peer_id: str):
 
+        info_hash = self._metadata.info_hash()
+        announce_url = self._metadata.announce_url()
+
         while not self.is_complete():
             # Query the tracker
-            params = connection.build_peer_request(self._metadata_infoHash, own_peer_id)
-            req = requests.get(self._metadata.announce_url, params)
+            params = connection.build_peer_request(info_hash, own_peer_id)
+            req = requests.get(announce_url, params)
 
             # Decode the answer and wait for next call
             answer = bencode.decode_dictionary(req.content)[0]
@@ -116,16 +117,6 @@ class Torrent:
             print(f"Peer request: Waiting for {answer['interval']}s")
             time.sleep(answer["interval"])
 
-    def _calculate_encoded_info_hash(self):
-        info = {
-            "length": self._metadata.file_length,
-            "name": self._metadata.file_name,
-            "piece length": self._metadata.file_piece_length,
-            "pieces": self._metadata.pieces
-        }
-
-        return sha1(bencode.encode_dictionary(info)).digest()
-
     def _divide_into_blocks(self) -> Queue:
         """
         It takes the all pieces from the file and divide them into blocks of size up to 16KB
@@ -133,7 +124,7 @@ class Torrent:
         """
         q = Queue()
 
-        total_file_left = self._metadata.file_length
+        total_file_left = self._metadata.file_length()
         piece_id = 0
         current_position = 0
 
@@ -141,7 +132,7 @@ class Torrent:
             # We now have a piece to deal with. A piece will be divided into multiple blocks of a specified length by
             # the tracker
             piece = Piece(piece_id=piece_id, hash=self._pieces[piece_id], blocks=[])
-            piece_size = min(self._metadata.file_piece_length, total_file_left)
+            piece_size = min(self._metadata.piece_length(), total_file_left)
             total_file_left -= piece_size
 
             # Split into blocks
@@ -179,7 +170,7 @@ class Torrent:
             print(f"> Connected to {peer_ip}:{peer_port}")
 
             # Send Handshake and receive
-            handshake = connection.build_handshake(self._metadata_infoHash, own_peer_id)
+            handshake = connection.build_handshake(self._metadata.info_hash(), own_peer_id)
             network.send_data(conn, handshake)
             _ = network.receive_data_with_length(conn, len(handshake))
 
@@ -231,8 +222,8 @@ class Torrent:
                         continue
 
                     elif bitfield == 7:
-                        i, b, bl = connection.parse_piece(payload)
-                        total_piece += bl
+                        i, b, block_pieces.data = connection.parse_piece(payload)
+                        total_piece += block_pieces.data
                         break
 
                     else:
@@ -248,7 +239,7 @@ class Torrent:
                 self._peers.put(peer)
                 return
 
-            with open(self._metadata.file_name, "r+b") as file:
+            with open(self._metadata.name(), "r+b") as file:
 
                 self.file_mutex.acquire()
                 try:

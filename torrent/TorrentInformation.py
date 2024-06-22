@@ -1,34 +1,58 @@
-from dataclasses import dataclass
 
+from hashlib import sha1
+
+from bencode import bencode
 from torrent.TorrentException import TorrentException
 
-
-@dataclass
 class TorrentInformation:
     """
     Holds the metadata from the torrent file
     """
-    announce_url: str
-    creation_date: str
-    author: str
-
-    file_length: int
-    file_name: str
-    file_piece_length: int
-    file_pieces: bytes
 
     def __init__(self, info):
-        self.announce_url = TorrentInformation.get("announce", info).decode()
-        self.creation_date = TorrentInformation.get('creation date', info)
-        self.author = TorrentInformation.get("created by", info).decode()
-        self.comment = TorrentInformation.get("comment", info).decode()
 
-        self.file_length = TorrentInformation.get('length', info['info'])
-        self.file_name = TorrentInformation.get('name', info['info'])
-        self.file_piece_length = TorrentInformation.get('piece length', info['info'])
+        self._info = info
+
+        # Calculate the info_hash
+        self._info_hash = sha1(bencode.encode_dictionary(info['info'])).digest()
+
         self.pieces = TorrentInformation.get('pieces', info['info'])
 
-    @staticmethod
+
+    def announce_url(self):
+        return TorrentInformation.get("announce", self._info).decode()
+
+    def creation_date(self):
+        return TorrentInformation.get('creation date', self._info)
+
+    def author(self):
+        return TorrentInformation.get("created by", self._info).decode()
+    
+    def comment(self):
+        return TorrentInformation.get("comment", self._info).decode()
+    
+    def piece_length(self):
+        return TorrentInformation.get("piece length", self._info['info'])
+
+    def name(self):
+        return TorrentInformation.get("name", self._info['info']).decode()
+
+    def file_length(self):
+
+        if self.is_single_file():
+            return TorrentInformation.get("length", self._info['info'])
+
+        raise TorrentException("Torrent is not a single file torrent!")
+
+    def info_hash(self):
+        return self._info_hash
+
+    def is_single_file(self):
+        return 'length' in self._info['info']
+
+    def is_multi_file(self):
+        return 'files' in self._info['info']
+
     def get(val: str, data, forced=False):
         if val in data:
             return data[val]
