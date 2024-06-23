@@ -37,7 +37,7 @@ class Torrent:
         self._metadata = file_data
 
         # Create files to be downloaded
-        self._create_files()
+        self._tmpfile = self._create_temp_file()
 
         # Prepare all pieces to be downloaded for this torrent
         self.pieces_to_download = self._divide_into_blocks()
@@ -46,10 +46,18 @@ class Torrent:
         self.file_mutex = threading.Lock()
 
 
-    def _create_files(self):
-        with open(self._metadata.name(), "wb") as f:
-            f.truncate(self._metadata.file_length())
+    def _create_temp_file(self):
 
+        # Generate the random filename
+        random_filename = f"{self._metadata.info_hash().hex()}.tmp"
+
+        # Create the file
+        with open(random_filename, "wb") as file:
+            file.seek(self._metadata.file_length() - 1)
+            file.write(b"\0")
+
+        return random_filename
+    
     def is_complete(self):
         return self._to_complete_pieces == 0
 
@@ -61,8 +69,30 @@ class Torrent:
         # Start threads responsible for downloading the pieces
         self._download(own_peer_id)
 
+        # Create the final file
+        self._create_final_files()
+
         # End threads
         tracker_comm.join()
+    
+    def _create_final_files(self):
+
+        with open(self._tmpfile, "rb") as tmp_file:
+
+            for file in self._metadata._files:
+
+                # Create the directories
+                path = "/".join(file.path[:-1])
+
+                if path:
+                    import os
+                    os.makedirs(path, exist_ok=True)
+
+                with open(file.path[-1], "wb") as final_file:
+                    final_file.write(tmp_file.read(file.length))
+
+
+
 
     def _download(self, own_peer_id):
 
@@ -125,7 +155,7 @@ class Torrent:
         """
         q = Queue()
 
-        total_file_left = self._metadata.file_length()
+        total_file_left = self._metadata.total_length()
         piece_id = 0
         current_position = 0
 
@@ -240,7 +270,7 @@ class Torrent:
                 self._peers.put(peer)
                 return
 
-            with open(self._metadata.name(), "r+b") as file:
+            with open(self._tmpfile, "r+b") as file:
 
                 self.file_mutex.acquire()
                 try:

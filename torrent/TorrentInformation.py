@@ -7,7 +7,7 @@ from torrent.TorrentException import TorrentException
 
 @dataclasses.dataclass
 class FileInformation:
-    lenght: int
+    length: int
     path: list
 
 class TorrentInformation:
@@ -29,7 +29,6 @@ class TorrentInformation:
         pieces = TorrentInformation._get('pieces', info['info'])
         self._pieces = [pieces[i:i+20] for i in range(0, len(pieces), 20)]
 
-
     def announce_url(self):
         return TorrentInformation._get("announce", self._info).decode()
 
@@ -44,6 +43,9 @@ class TorrentInformation:
     
     def piece_length(self):
         return TorrentInformation._get("piece length", self._info['info'])
+
+    def total_length(self):
+        return sum([f.length for f in self._files])
 
     def name(self):
         return TorrentInformation._get("name", self._info['info']).decode()
