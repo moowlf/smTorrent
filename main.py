@@ -1,8 +1,10 @@
 
 import sys
 from bencode import bencode
-from torrent import session, torrent
 from torrent.TorrentInformation import TorrentInformation
+
+from torrent.Session import Session
+from torrent.Torrent import Torrent
 
 # Torrent file
 if len(sys.argv) != 2:
@@ -10,11 +12,11 @@ if len(sys.argv) != 2:
     sys.exit(1)
 
 filepath = sys.argv[1]
-current_session = session.Session()
+current_session = Session()
 
 with open(filepath, 'rb') as f:
     d = bencode.decode_dictionary(f.read())[0]
 
-    current_session.add_torrent(torrent.Torrent(TorrentInformation(d)))
+    current_session.add_torrent(Torrent(TorrentInformation(d)))
     current_session.download()
 

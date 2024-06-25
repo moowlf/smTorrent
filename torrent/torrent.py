@@ -7,11 +7,9 @@ import requests
 from typing import List
 from bencode import bencode
 from hashlib import sha1
-from torrent import connection
+from torrent import Connection, TorrentInformation, Network
 from queue import Queue
 
-from torrent.TorrentInformation import TorrentInformation
-from torrent.Network import Network
 
 
 @dataclasses.dataclass
@@ -53,7 +51,7 @@ class Torrent:
 
         # Create the file
         with open(random_filename, "wb") as file:
-            file.seek(self._metadata.file_length() - 1)
+            file.seek(self._metadata.total_length() - 1)
             file.write(b"\0")
 
         return random_filename
@@ -132,7 +130,8 @@ class Torrent:
 
         while not self.is_complete():
             # Query the tracker
-            params = connection.build_peer_request(info_hash, own_peer_id)
+            params = Connection.build_peer_request(info_hash, own_peer_id)
+
             req = requests.get(announce_url, params)
 
             # Decode the answer and wait for next call
@@ -201,12 +200,12 @@ class Torrent:
             print(f"> Connected to {peer_ip}:{peer_port}")
 
             # Send Handshake and receive
-            handshake = connection.build_handshake(self._metadata.info_hash(), own_peer_id)
+            handshake = Connection.build_handshake(self._metadata.info_hash(), own_peer_id)
             network.send_data(conn, handshake)
             _ = network.receive_data_with_length(conn, len(handshake))
 
             # Send interested
-            interested = connection.build_interested()
+            interested = Connection.build_interested()
             network.send_data(conn, interested)
 
             # Download Piece
@@ -221,7 +220,7 @@ class Torrent:
                 piece_size = block_pieces.block_size
 
                 # Build piece request
-                piece_req = connection.build_request_piece(piece_id, piece_offset, piece_size)
+                piece_req = Connection.build_request_piece(piece_id, piece_offset, piece_size)
 
                 # Completed
                 is_completed = False
@@ -237,7 +236,7 @@ class Torrent:
                     # here all the received messages are prefixed with the length of the message
                     # so, we are not passing any buffer size
                     received_data = network.receive_data(conn)
-                    length, bitfield, payload = connection.parse_peer_message(received_data)
+                    length, bitfield, payload = Connection.parse_peer_message(received_data)
 
                     # Deal with the received data
                     if length == 0:
@@ -253,7 +252,7 @@ class Torrent:
                         continue
 
                     elif bitfield == 7:
-                        i, b, block_pieces.data = connection.parse_piece(payload)
+                        i, b, block_pieces.data = Connection.parse_piece(payload)
                         total_piece += block_pieces.data
                         break
 
