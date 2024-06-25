@@ -156,7 +156,6 @@ def encode_list(lst):
     :param lst: The list to be encoded
     :return: A String representing the passed list in bencode format
     """
-    #data = bytearray()
     data = b'l'
 
     for obj in lst:
@@ -168,6 +167,8 @@ def encode_list(lst):
             data += encode_string(obj)
         elif type(obj) is dict:
             data += encode_dictionary(obj)
+        elif type(obj) is bytes:
+            data += encode_bytes(obj)
 
     data += b'e'
     return data
@@ -234,8 +235,8 @@ def encode_dictionary(dictionary):
     :param dictionary: The dictionary to be encoded
     :return: A String representing the passed dictionary in bencode format
     """
-    data = bytearray()
-    data += b'd'
+
+    data = b"d"
 
     for obj in dictionary:
 
@@ -250,13 +251,14 @@ def encode_dictionary(dictionary):
         elif type(dictionary[obj]) is dict:
             data += encode_dictionary(dictionary[obj])
         elif type(dictionary[obj]) is bytes:
-            res = bytearray()
-            res += str.encode(str(len(dictionary[obj])))
-            res += b':'
-            res += dictionary[obj]
-            data += res
+            data += encode_bytes(dictionary[obj])
         else:
             raise 'yelp'
     data += b'e'
-    print(data)
+    return data
+
+def encode_bytes(buf):
+
+    data = b""
+    data += str.encode(str(len(buf))) + b":" + buf
     return data

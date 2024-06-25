@@ -20,15 +20,7 @@ class TorrentInformation:
         self._info = info
 
         # Calculate the info_hash
-        info_hash = dict(sorted(info["info"].items()))
-        info_hash = OrderedDict(sorted(info["info"].items()))
-
-        if 'files' in info_hash:
-            info_hash['files'] = [
-                OrderedDict(sorted(file.items())) for file in info_hash['files']
-            ]
-        self._info_hash = sha1(bencode.encode_dictionary(info_hash)).digest()
-        print(self._info_hash.hex())
+        self._info_hash = sha1(bencode.encode_dictionary(info["info"])).digest()
 
         # Process the files in the torrent
         self._files = self._process_files()

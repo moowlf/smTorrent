@@ -7,10 +7,8 @@ import requests
 from typing import List
 from bencode import bencode
 from hashlib import sha1
-from torrent import Connection, TorrentInformation, Network
+from torrent import Connection, Network
 from queue import Queue
-
-
 
 @dataclasses.dataclass
 class BlockPiece:
@@ -88,9 +86,6 @@ class Torrent:
 
                 with open(file.path[-1], "wb") as final_file:
                     final_file.write(tmp_file.read(file.length))
-
-
-
 
     def _download(self, own_peer_id):
 
@@ -194,10 +189,10 @@ class Torrent:
             peer_ip, peer_port = peer["ip"], peer["port"]
 
             # Get Connection
-            conn = Network.get_socket(peer_ip)
+            conn = Network.Network.get_socket(peer_ip)
             conn.connect((peer_ip, peer_port))
-            network = Network()
-            print(f"> Connected to {peer_ip}:{peer_port}")
+            network = Network.Network()
+            print(f"> Connected to {peer_ip}:{peer_port} / {self._to_complete_pieces}")
 
             # Send Handshake and receive
             handshake = Connection.build_handshake(self._metadata.info_hash(), own_peer_id)
