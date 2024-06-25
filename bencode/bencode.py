@@ -258,4 +258,5 @@ def encode_dictionary(dictionary):
         else:
             raise 'yelp'
     data += b'e'
+    print(data)
     return data

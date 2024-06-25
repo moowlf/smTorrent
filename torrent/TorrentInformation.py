@@ -1,7 +1,7 @@
 
 import dataclasses
 from hashlib import sha1
-
+from collections import OrderedDict
 from bencode import bencode
 from torrent.TorrentException import TorrentException
 
@@ -20,7 +20,15 @@ class TorrentInformation:
         self._info = info
 
         # Calculate the info_hash
-        self._info_hash = sha1(bencode.encode_dictionary(info['info'])).digest()
+        info_hash = dict(sorted(info["info"].items()))
+        info_hash = OrderedDict(sorted(info["info"].items()))
+
+        if 'files' in info_hash:
+            info_hash['files'] = [
+                OrderedDict(sorted(file.items())) for file in info_hash['files']
+            ]
+        self._info_hash = sha1(bencode.encode_dictionary(info_hash)).digest()
+        print(self._info_hash.hex())
 
         # Process the files in the torrent
         self._files = self._process_files()
