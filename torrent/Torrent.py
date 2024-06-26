@@ -2,6 +2,7 @@
 import threading
 import time
 import requests
+import logging
 
 from torrent.PieceManager import PieceManager 
 from bencode import bencode
@@ -15,6 +16,9 @@ class Torrent:
     def __init__(self, file_data):
         self._peers = Queue()
         self._metadata = file_data
+
+        # Network data
+        self._network = Network.Network()
 
         # Create files to be downloaded
         self._tmpfile = self._create_temp_file()
@@ -37,24 +41,19 @@ class Torrent:
 
         return random_filename
     
-    def download(self, own_peer_id: str, threads=1):
+    def download(self, own_peer_id: str):
         # Start thread responsible for communicating with tracker
         tracker_comm = threading.Thread(target=self._get_peers, args=(own_peer_id,))
         tracker_comm.start()
-
-        # Start thread responsible for console output
-        console_output = threading.Thread(target=self._console_output)
-        console_output.start()
 
         # Start threads responsible for downloading the pieces
         self._download(own_peer_id)
 
         # Create the final file
         self._create_final_files()
-
+        
         # End threads
         tracker_comm.join()
-        console_output.join()
     
     def _create_final_files(self):
 
@@ -130,17 +129,18 @@ class Torrent:
             # Get Connection
             conn = Network.Network.get_socket(peer_ip)
             conn.connect((peer_ip, peer_port))
-            network = Network.Network()
-            print(f"> Connected to {peer_ip}:{peer_port}")
+            logging.log(logging.INFO, f"Connected to {peer_ip}:{peer_port}")
 
             # Send Handshake and receive
             handshake = Connection.build_handshake(self._metadata.info_hash(), own_peer_id)
-            network.send_data(conn, handshake)
-            _ = network.receive_data_with_length(conn, len(handshake))
+            self._network.send_data(conn, handshake)
+            _ = self._network.receive_data_with_length(conn, len(handshake))
+            logging.log(logging.INFO, f"Handshake sent and received")
 
             # Send interested
             interested = Connection.build_interested()
-            network.send_data(conn, interested)
+            self._network.send_data(conn, interested)
+            logging.log(logging.INFO, f"Interested sent")
 
             # Download Piece
             current_state = "chocked"
@@ -169,12 +169,12 @@ class Torrent:
 
                         if not requested_piece  and current_state != "chocked":
                             requested_piece = True
-                            network.send_data(conn, piece_req)
+                            self._network.send_data(conn, piece_req)
                             continue
 
                         # here all the received messages are prefixed with the length of the message
                         # so, we are not passing any buffer size
-                        received_data = network.receive_data(conn)
+                        received_data = self._network.receive_data(conn)
                         length, bitfield, payload = Connection.parse_peer_message(received_data)
 
                         # Deal with the received data
@@ -223,16 +223,17 @@ class Torrent:
             if piece_to_download is not None:
                 self._pieces.put_back(piece_to_download)
 
-    def _console_output(self):
+
+    def __str__(self):
         
         from math import trunc
-        import os
 
-        while not self._pieces.download_complete():
-            percentage = 100 * (self._pieces.total_pieces() - self._pieces.yet_to_download()) / self._pieces.total_pieces()
-            arr = "#" * trunc(percentage)
-            arr += "-" * (100 - trunc(percentage))
+        downloaded_megabytes = self._network.downloaded() / 1024 / 1024
+        uploaded_megabytes = self._network.uploaded() / 1024 / 1024
 
-            os.system('cls' if os.name=='nt' else 'clear')
-            print(f"{self._metadata.name()} - [{arr}] {percentage:.2f}%")
-            time.sleep(1)
+        percentage = 100 * (self._pieces.total_pieces() - self._pieces.yet_to_download()) / self._pieces.total_pieces()
+        arr = "#" * trunc(percentage)
+        arr += "-" * (100 - trunc(percentage))
+        
+        arr = f"[{arr}] {percentage:.2f}% {downloaded_megabytes:.2f}MB {uploaded_megabytes:.2f}MB"
+        return f"{self._metadata.name()} - {arr}"

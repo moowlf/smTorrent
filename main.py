@@ -10,8 +10,7 @@ from torrent.Session import Session
 from torrent.Torrent import Torrent
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s][%(levelname)s] - %(message)s')
-
+logging.basicConfig(filename="smtorrent.log", level=logging.INFO, format='[%(asctime)s][%(levelname)s] - %(message)s')
 
 # Torrent file
 if len(sys.argv) != 2:
@@ -30,5 +29,6 @@ with open(filepath, 'rb') as f:
     logging.log(logging.INFO, f"Torrent information: {base64.encodebytes(str(torrent_information).encode())}")
 
     current_session.add_torrent(Torrent(torrent_information))
+    
     current_session.download()
-
+    current_session.wait_to_close()
