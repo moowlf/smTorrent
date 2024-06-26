@@ -84,3 +84,19 @@ class TorrentInformation:
         if forced:
             raise TorrentException(f"Dictionary has no {val}!")
         return b""
+
+    def __str__(self) -> str:
+        data = {
+            "announce": self.announce_url(),
+            "creation date": self.creation_date(),
+            "author": self.author(),
+            "comment": self.comment(),
+            "piece length": self.piece_length(),
+            "total length": self.total_length(),
+            "name": self.name(),
+            "info hash": self.info_hash(),
+            "is single file": self.is_single_file(),
+            "is multi file": self.is_multi_file(),
+            "files": self._files
+        }
+        return str(data)

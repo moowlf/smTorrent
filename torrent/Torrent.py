@@ -1,10 +1,9 @@
 
-import queue
 import threading
 import time
 import requests
 
-from torrent.PieceManager import PieceManager, Piece 
+from torrent.PieceManager import PieceManager 
 from bencode import bencode
 from hashlib import sha1
 from torrent import Connection, Network
@@ -235,5 +234,5 @@ class Torrent:
             arr += "-" * (100 - trunc(percentage))
 
             os.system('cls' if os.name=='nt' else 'clear')
-            print(f"{self._metadata.name()} - [{arr}]")
+            print(f"{self._metadata.name()} - [{arr}] {percentage:.2f}%")
             time.sleep(1)
