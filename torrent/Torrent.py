@@ -43,6 +43,10 @@ class Torrent:
         tracker_comm = threading.Thread(target=self._get_peers, args=(own_peer_id,))
         tracker_comm.start()
 
+        # Start thread responsible for console output
+        console_output = threading.Thread(target=self._console_output)
+        console_output.start()
+
         # Start threads responsible for downloading the pieces
         self._download(own_peer_id)
 
@@ -51,6 +55,7 @@ class Torrent:
 
         # End threads
         tracker_comm.join()
+        console_output.join()
     
     def _create_final_files(self):
 
@@ -83,18 +88,9 @@ class Torrent:
                 continue
 
             """
-            Get the actual work to be done
-            """
-            try:
-                work = self._pieces.get_next_piece()
-            except queue.Empty:
-                self._peers.put(peer)
-                continue
-
-            """
             We have reached a valid state for download to start
             """
-            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer, work), name=peer["ip"]))
+            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer), name=peer["ip"]))
             threads[-1].start()
 
         [thread.join() for thread in threads]
@@ -124,8 +120,9 @@ class Torrent:
             print(f"Peer request: Waiting for {answer['interval']}s")
             time.sleep(answer["interval"])
 
+    def _download_piece(self, own_peer_id, peer):
 
-    def _download_piece(self, own_peer_id, peer, piece: Piece):
+        piece_to_download = None
 
         try:
             # Retrieve IP to connect (assuming every IP has all files)
@@ -147,77 +144,96 @@ class Torrent:
             network.send_data(conn, interested)
 
             # Download Piece
-            total_piece = b""
             current_state = "chocked"
 
-            for block_pieces in piece.blocks:
+            while not self._pieces.download_complete():
 
-                # Helper variables
-                piece_id = block_pieces.piece_id
-                piece_offset = block_pieces.block_id * 2 ** 14
-                piece_size = block_pieces.block_size
+                # Retrieve the next piece to download
+                piece_to_download = self._pieces.get_next_piece()
+                total_piece = b""
+                
+                for block_pieces in piece_to_download.blocks:
 
-                # Build piece request
-                piece_req = Connection.build_request_piece(piece_id, piece_offset, piece_size)
+                    # Helper variables
+                    piece_id = block_pieces.piece_id
+                    piece_offset = block_pieces.block_id * 2 ** 14
+                    piece_size = block_pieces.block_size
 
-                # Completed
-                is_completed = False
-                requested_piece = False
+                    # Build piece request
+                    piece_req = Connection.build_request_piece(piece_id, piece_offset, piece_size)
 
-                while not is_completed:
+                    # Completed
+                    is_completed = False
+                    requested_piece = False
 
-                    if not requested_piece  and current_state != "chocked":
-                        requested_piece = True
-                        network.send_data(conn, piece_req)
-                        continue
+                    while not is_completed:
 
-                    # here all the received messages are prefixed with the length of the message
-                    # so, we are not passing any buffer size
-                    received_data = network.receive_data(conn)
-                    length, bitfield, payload = Connection.parse_peer_message(received_data)
+                        if not requested_piece  and current_state != "chocked":
+                            requested_piece = True
+                            network.send_data(conn, piece_req)
+                            continue
 
-                    # Deal with the received data
-                    if length == 0:
-                        continue
+                        # here all the received messages are prefixed with the length of the message
+                        # so, we are not passing any buffer size
+                        received_data = network.receive_data(conn)
+                        length, bitfield, payload = Connection.parse_peer_message(received_data)
 
-                    if bitfield == 0:
-                        current_state = "chocked"
+                        # Deal with the received data
+                        if length == 0:
+                            continue
 
-                    elif bitfield == 1:
-                        current_state = "unchocked"
+                        if bitfield == 0:
+                            current_state = "chocked"
 
-                    elif bitfield == 5:
-                        continue
+                        elif bitfield == 1:
+                            current_state = "unchocked"
 
-                    elif bitfield == 7:
-                        i, b, block_pieces.data = Connection.parse_piece(payload)
-                        total_piece += block_pieces.data
-                        break
+                        elif bitfield == 5:
+                            continue
 
-                    else:
-                        print(f"Unknown bitfield {bitfield} received")
+                        elif bitfield == 7:
+                            i, b, block_pieces.data = Connection.parse_piece(payload)
+                            total_piece += block_pieces.data
+                            break
 
-            # Downloaded all the blocks from the piece
-            hash = sha1(total_piece)
+                        else:
+                            print(f"Unknown bitfield {bitfield} received")
 
-            print(hash.hexdigest(), piece.hash.hex())
-            if piece.hash.hex() != hash.hexdigest():
-                print(f"{peer_ip} : Hashes do not match")
-                self.pieces_to_download.put(piece)
-                self._peers.put(peer)
-                return
+                # Downloaded all the blocks from the piece
+                hash = sha1(total_piece)
 
-            with open(self._tmpfile, "r+b") as file:
+                if piece_to_download.hash.hex() != hash.hexdigest():
+                    print(f"{peer_ip} : Hashes do not match")
+                    self._pieces.put_back(piece_to_download)
+                    self._peers.put(peer)
+                    return
 
-                self.file_mutex.acquire()
-                try:
-                    for bl in piece.blocks:
-                        file.seek(bl.start_position)
-                        file.write(bl.data)
-                finally:
-                    self.file_mutex.release()
+                with open(self._tmpfile, "r+b") as file:
+
+                    self.file_mutex.acquire()
+                    try:
+                        for bl in piece_to_download.blocks:
+                            file.seek(bl.start_position)
+                            file.write(bl.data)
+                    finally:
+                        self.file_mutex.release()
 
             self._peers.put(peer)
             conn.close()
-        except Exception as e:
-            print(e)
+        except Exception:
+            if piece_to_download is not None:
+                self._pieces.put_back(piece_to_download)
+
+    def _console_output(self):
+        
+        from math import trunc
+        import os
+
+        while not self._pieces.download_complete():
+            percentage = 100 * (self._pieces.total_pieces() - self._pieces.yet_to_download()) / self._pieces.total_pieces()
+            arr = "#" * trunc(percentage)
+            arr += "-" * (100 - trunc(percentage))
+
+            os.system('cls' if os.name=='nt' else 'clear')
+            print(f"{self._metadata.name()} - [{arr}]")
+            time.sleep(1)

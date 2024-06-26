@@ -31,12 +31,12 @@ class Network:
     def receive_data(self, conn):
 
         while len(self.data) < 4:
-            self.data += conn.recv(2**14)
+            self.data += self._recv(conn)
         
         size = int.from_bytes(self.data[:4], byteorder='big')
 
         while len(self.data) < size:
-            self.data += conn.recv(2**14)
+            self.data += self._recv(conn)
         
         message = self.data[:4 + size]
         self.data = self.data[4 + size:]
@@ -45,8 +45,16 @@ class Network:
     def receive_data_with_length(self, conn, length):
 
         while len(self.data) < length:
-            self.data += conn.recv(2**14)
+            self.data += self._recv(conn)
         
         message = self.data[:length]
         self.data = self.data[length:]
         return message
+
+
+    def _recv(self, conn):
+
+        tmp =  conn.recv(2**14)
+        if len(tmp) == 0:
+            raise ConnectionError("Connection was closed")
+        return tmp

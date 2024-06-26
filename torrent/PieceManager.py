@@ -83,3 +83,6 @@ class PieceManager:
     
     def yet_to_download(self):
         return self._download_queue.qsize()
+
+    def total_pieces(self):
+        return len(self._pieces)
