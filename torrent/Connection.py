@@ -1,5 +1,3 @@
-import random
-
 
 def parse_peer_message(message: bytes):
     length = message[0:4]

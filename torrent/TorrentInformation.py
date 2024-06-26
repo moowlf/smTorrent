@@ -1,7 +1,6 @@
 
 import dataclasses
 from hashlib import sha1
-from collections import OrderedDict
 from bencode import bencode
 from torrent.TorrentException import TorrentException
 
