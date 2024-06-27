@@ -17,6 +17,9 @@ class Torrent:
         self._peers = Queue()
         self._metadata = file_data
 
+        # Should end the download
+        self._should_end = False
+
         # Network data
         self._network = Network.Network()
 
@@ -75,7 +78,7 @@ class Torrent:
 
         threads = []
 
-        while not self._pieces.download_complete():
+        while not self._pieces.download_complete() and not self._should_end:
 
             """
             Try to retrieve a peer ip
@@ -104,6 +107,7 @@ class Torrent:
             params = Connection.build_peer_request(info_hash, own_peer_id)
 
             req = requests.get(announce_url, params)
+            print(req.content)
 
             # Decode the answer and wait for next call
             answer = bencode.decode_dictionary(req.content)[0]
@@ -223,6 +227,8 @@ class Torrent:
             if piece_to_download is not None:
                 self._pieces.put_back(piece_to_download)
 
+    def terminate(self):
+        self._should_end = True
 
     def __str__(self):
         

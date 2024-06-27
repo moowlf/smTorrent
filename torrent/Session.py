@@ -1,4 +1,5 @@
 
+import signal
 import logging
 import threading
 
@@ -7,6 +8,11 @@ from random import randint
 class Session:
 
     def __init__(self):
+
+        # Register the signal handler
+        self._should_terminate = False
+        signal.signal(signal.SIGINT, lambda signum, frame: self._terminate())
+
         # List of torrents currently being downloaded / seeded
         self._torrent_files = []
 
@@ -35,7 +41,7 @@ class Session:
 
         from time import sleep
 
-        while True:
+        while not self._should_terminate:
             for torrent in self._torrent_files:
                 print(torrent)
             
@@ -49,3 +55,9 @@ class Session:
 
     def torrents(self):
         return self._torrents
+    
+    def _terminate(self):
+        self._should_terminate = True
+        logging.log(logging.INFO, "Terminating session...")
+        for torrent in self._torrent_files:
+            torrent.terminate()
