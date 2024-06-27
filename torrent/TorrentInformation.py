@@ -28,8 +28,14 @@ class TorrentInformation:
         pieces = TorrentInformation._get('pieces', info['info'])
         self._pieces = [pieces[i:i+20] for i in range(0, len(pieces), 20)]
 
-    def announce_url(self):
-        return TorrentInformation._get("announce", self._info).decode()
+    def announce_urls(self):
+
+        trackers = [TorrentInformation._get("announce", self._info).decode()]
+
+        for tracker in TorrentInformation._get("announce-list", self._info, True):
+            trackers.append(tracker[0].decode())
+
+        return trackers
 
     def creation_date(self):
         return TorrentInformation._get('creation date', self._info)
@@ -87,7 +93,7 @@ class TorrentInformation:
 
     def __str__(self) -> str:
         data = {
-            "announce": self.announce_url(),
+            "announce-list": self.announce_urls(),
             "creation date": self.creation_date(),
             "author": self.author(),
             "comment": self.comment(),

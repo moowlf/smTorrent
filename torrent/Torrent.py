@@ -1,20 +1,16 @@
 
-import threading
-import time
-import requests
 import logging
+import threading
 
+from torrent.PeerManager import PeerManager
 from torrent.PieceManager import PieceManager 
-from bencode import bencode
+
 from hashlib import sha1
 from torrent import Connection, Network
-from queue import Queue
-
 
 class Torrent:
 
     def __init__(self, file_data):
-        self._peers = Queue()
         self._metadata = file_data
 
         # Should end the download
@@ -28,6 +24,9 @@ class Torrent:
 
         # Prepare all pieces to be downloaded for this torrent
         self._pieces = PieceManager(self._metadata)
+
+        # Prepare tracker manager
+        self._peer_manager = PeerManager(self._metadata)
 
         self.file_mutex = threading.Lock()
 
@@ -46,8 +45,7 @@ class Torrent:
     
     def download(self, own_peer_id: str):
         # Start thread responsible for communicating with tracker
-        tracker_comm = threading.Thread(target=self._get_peers, args=(own_peer_id,))
-        tracker_comm.start()
+        self._peer_manager.start(own_peer_id)
 
         # Start threads responsible for downloading the pieces
         self._download(own_peer_id)
@@ -56,7 +54,7 @@ class Torrent:
         self._create_final_files()
         
         # End threads
-        tracker_comm.join()
+        self._peer_manager.terminate()
     
     def _create_final_files(self):
 
@@ -83,9 +81,8 @@ class Torrent:
             """
             Try to retrieve a peer ip
             """
-            try:
-                peer = self._peers.get(timeout=5)
-            except Exception as e:
+            peer = self._peer_manager.get_peer()
+            if peer is None:
                 continue
 
             """
@@ -95,32 +92,6 @@ class Torrent:
             threads[-1].start()
 
         [thread.join() for thread in threads]
-
-    def _get_peers(self, own_peer_id: str):
-
-        info_hash = self._metadata.info_hash()
-        announce_url = self._metadata.announce_url()
-
-        while not self._pieces.download_complete():
-            
-            # Query the tracker
-            params = Connection.build_peer_request(info_hash, own_peer_id)
-
-            req = requests.get(announce_url, params)
-            print(req.content)
-
-            # Decode the answer and wait for next call
-            answer = bencode.decode_dictionary(req.content)[0]
-
-            while not self._peers.empty():
-                self._peers.get()
-
-            for peer in answer["peers"]:
-                self._peers.put({"ip": peer["ip"].decode(), "port": peer["port"]})
-
-            # Sleep
-            print(f"Peer request: Waiting for {answer['interval']}s")
-            time.sleep(answer["interval"])
 
     def _download_piece(self, own_peer_id, peer):
 
