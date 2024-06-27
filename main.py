@@ -30,29 +30,7 @@ current_session = Session()
 logging.log(logging.INFO, f"Opening file {filepath}")
 
 # Register the signal handler
-signal.signal(signal.SIGINT, lambda signum, frame: current_session.terminate())
-
-
-# Read n lines from the end of file
-def tail_file(file, n):
-
-    with open(file, "rb") as f:
-        try:
-            f.seek(-2, os.SEEK_END)
-            
-            while n > 0:
-
-                if f.read(1) == b"\n":
-                    n -= 1
-    
-                f.seek(-2, os.SEEK_CUR)
-
-        except OSError:
-            f.seek(0)
-
-        return [line.decode() for line in f.readlines()]
-
-
+#signal.signal(signal.SIGINT, lambda signum, frame: current_session.terminate())
 
 # Output the torrent information
 def output_torrent_information_to_console():
@@ -61,22 +39,15 @@ def output_torrent_information_to_console():
 
     # ==== Torrents =====
     cols = (120 - len(" Torrents ")) // 2
-    print("*" * cols + " Torrents " + "*" * cols)
-    print()
+    history = "*" * cols + " Torrents " + "*" * cols
+    history += "\n\n"
 
     # print torrents
     for torrent in current_session.torrents():
-        print(torrent)
-    print()
+        history += str(torrent) + "\n"
+    history += "\n"
 
-    # ==== Logs =====
-    cols = (120 - len(" Logs ")) // 2
-    print("*" * cols + " Logs " + "*" * cols)
-    print()
-
-    log_lines = tail_file(LOG_FILE, 10)
-    for line in log_lines:
-        print(line.rstrip() if len(line) < 120 else line[:117] + "...")
+    print(history)
 
 
 with open(filepath, "rb") as f:
@@ -93,6 +64,6 @@ with open(filepath, "rb") as f:
 
     while not current_session.is_terminated():
         output_torrent_information_to_console()
-        time.sleep(2)
+        time.sleep(1)
     
     current_session.wait_to_close()

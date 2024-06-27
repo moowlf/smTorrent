@@ -32,9 +32,9 @@ class TorrentInformation:
 
         trackers = [TorrentInformation._get("announce", self._info).decode()]
 
-        for tracker in TorrentInformation._get("announce-list", self._info, True):
+        for tracker in TorrentInformation._get("announce-list", self._info, False):
             trackers.append(tracker[0].decode())
-
+        
         return trackers
 
     def creation_date(self):

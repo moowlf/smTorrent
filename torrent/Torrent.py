@@ -194,7 +194,7 @@ class Torrent:
 
             conn.close()
         except Exception as e:
-            print(e)
+            logging.log(logging.ERROR, f"Error downloading piece {piece_to_download.piece_id} from {peer_ip}. {e}")
             if piece_to_download is not None:
                 self._pieces.put_back(piece_to_download)
 
