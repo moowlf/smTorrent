@@ -1,5 +1,5 @@
 
-import signal
+
 import logging
 import threading
 

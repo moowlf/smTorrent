@@ -39,7 +39,17 @@ class PeerManager:
 
     def _connect(self, tracker_url, own_peer_id):
 
+        last_time = time.time()
+        sleep_interval = 0
+
         while not self._should_end:
+
+            # Wait for the next call
+            if time.time() - last_time < sleep_interval:
+                time.sleep(1)
+                continue
+            
+            last_time = time.time()
 
             # Query the tracker
             params = Connection.build_peer_request(self._info_hash, own_peer_id)
@@ -64,8 +74,7 @@ class PeerManager:
                     self._peers_array.append(peer_addr)
 
             # Sleep
-            logging.log(logging.INFO, f"Peer request: Waiting for {answer['interval']}s")
-            time.sleep(answer["interval"])
+            sleep_interval = answer["interval"]
     
 
     def get_peer(self):
