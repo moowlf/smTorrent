@@ -77,11 +77,21 @@ class TorrentInformation:
     def is_multi_file(self):
         return 'files' in self._info['info']
 
-    def _process_files(self):
-        if self.is_single_file():
-            return [FileInformation(TorrentInformation._get("length", self._info['info']), [TorrentInformation._get("name", self._info['info'])])]
+    def files(self):
+        return self._files
 
-        return [FileInformation(f['length'], f['path']) for f in TorrentInformation._get("files", self._info['info'])]
+    def _process_files(self):
+        
+        def convert_path(path):
+            return "/".join([p.decode() for p in path])
+        
+        if self.is_single_file():
+
+            length = TorrentInformation._get("length", self._info['info'])
+            name = TorrentInformation._get("name", self._info['info']).decode()
+            return [FileInformation(length, name)]
+
+        return [FileInformation(f['length'], convert_path(f['path'])) for f in TorrentInformation._get("files", self._info['info'])]
 
     def _get(val: str, data, forced=False):
         if val in data:

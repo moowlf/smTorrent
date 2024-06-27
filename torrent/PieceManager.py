@@ -17,6 +17,7 @@ class BlockPiece:
 @dataclass
 class Piece:
     piece_id: int
+    offset: int
     hash: bytearray
     blocks: List[BlockPiece]
 
@@ -29,7 +30,7 @@ class PieceManager:
         
         # Create pieces from hashes
         for i, piece_hash in enumerate(torrent_information.pieces()):
-            self._pieces.append(Piece(piece_id=i, hash=piece_hash, blocks=[]))
+            self._pieces.append(Piece(piece_id=i, hash=piece_hash, blocks=[], offset=i * torrent_information.piece_length()))
 
         # Split pieces into blocks
         self._split_pieces_into_blocks(torrent_information)

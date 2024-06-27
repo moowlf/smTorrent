@@ -3,7 +3,8 @@ import logging
 import threading
 
 from torrent.PeerManager import PeerManager
-from torrent.PieceManager import PieceManager 
+from torrent.FileManager import FileManager
+from torrent.PieceManager import PieceManager
 
 from hashlib import sha1
 from torrent import Connection, Network
@@ -19,59 +20,25 @@ class Torrent:
         # Network data
         self._network = Network.Network()
 
-        # Create files to be downloaded
-        self._tmpfile = self._create_temp_file()
-
         # Prepare all pieces to be downloaded for this torrent
         self._pieces = PieceManager(self._metadata)
+
+        # Prepare the FileManager
+        self._file_manager = FileManager(self._metadata)
 
         # Prepare tracker manager
         self._peer_manager = PeerManager(self._metadata)
 
-        self.file_mutex = threading.Lock()
-
-
-    def _create_temp_file(self):
-
-        # Generate the random filename
-        random_filename = f"{self._metadata.info_hash().hex()}.tmp"
-
-        # Create the file
-        with open(random_filename, "wb") as file:
-            file.seek(self._metadata.total_length() - 1)
-            file.write(b"\0")
-
-        return random_filename
-    
     def download(self, own_peer_id: str):
         # Start thread responsible for communicating with tracker
         self._peer_manager.start(own_peer_id)
 
         # Start threads responsible for downloading the pieces
         self._download(own_peer_id)
-
-        # Create the final file
-        self._create_final_files()
         
         # End threads
         self._peer_manager.terminate()
         self._peer_manager.wait_to_close()
-    
-    def _create_final_files(self):
-
-        with open(self._tmpfile, "rb") as tmp_file:
-
-            for file in self._metadata._files:
-
-                # Create the directories
-                path = "/".join(file.path[:-1])
-
-                if path:
-                    import os
-                    os.makedirs(path, exist_ok=True)
-
-                with open(file.path[-1], "wb") as final_file:
-                    final_file.write(tmp_file.read(file.length))
 
     def _download(self, own_peer_id):
 
@@ -182,19 +149,11 @@ class Torrent:
                     self._pieces.put_back(piece_to_download)
                     return
 
-                with open(self._tmpfile, "r+b") as file:
-
-                    self.file_mutex.acquire()
-                    try:
-                        for bl in piece_to_download.blocks:
-                            file.seek(bl.start_position)
-                            file.write(bl.data)
-                    finally:
-                        self.file_mutex.release()
+                self._file_manager.write(piece_to_download.offset, total_piece)
 
             conn.close()
         except Exception as e:
-            logging.log(logging.ERROR, f"Error downloading piece {piece_to_download.piece_id} from {peer_ip}. {e}")
+            logging.log(logging.ERROR, f"Error downloading piece {piece_to_download.piece_id if piece_to_download else ""} from {peer_ip}. {e}")
             if piece_to_download is not None:
                 self._pieces.put_back(piece_to_download)
 
