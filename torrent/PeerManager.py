@@ -39,12 +39,15 @@ class PeerManager:
 
     def _connect(self, tracker_url, own_peer_id):
 
-        while self._should_end:
+        while not self._should_end:
 
             # Query the tracker
             params = Connection.build_peer_request(self._info_hash, own_peer_id)
 
-            req = requests.get(tracker_url, params)
+            try:
+                req = requests.get(tracker_url, params)
+            except Exception:
+                break
 
             # Decode the answer and wait for next call
             answer = bencode.decode_dictionary(req.content)[0]
@@ -52,12 +55,13 @@ class PeerManager:
             # Add peers to the set
             with self._lock:
                 for peer in answer["peers"]:
-
-                    if peer in self._peers:
+                    
+                    peer_addr = f"{peer['ip'].decode()}:{peer['port']}"
+                    if peer_addr in self._peers:
                         continue
                     
-                    self._peers[(peer["ip"].decode(), peer["port"])] = len(self._peers_array)
-                    self._peers_array.append((peer["ip"].decode(), peer["port"]))
+                    self._peers[peer_addr] = len(self._peers_array)
+                    self._peers_array.append(peer_addr)
 
             # Sleep
             logging.log(logging.INFO, f"Peer request: Waiting for {answer['interval']}s")

@@ -29,6 +29,5 @@ with open(filepath, 'rb') as f:
     logging.log(logging.INFO, f"Torrent information: {base64.encodebytes(str(torrent_information).encode())}")
 
     current_session.add_torrent(Torrent(torrent_information))
-    sys.exit(1)
     current_session.download()
     current_session.wait_to_close()

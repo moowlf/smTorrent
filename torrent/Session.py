@@ -40,13 +40,16 @@ class Session:
     def _status(self):
 
         from time import sleep
+        import os
 
         while not self._should_terminate:
+
+            os.system("clear" if os.name == "posix" else "cls")
             for torrent in self._torrent_files:
                 print(torrent)
             
             # Sleep for 5 seconds
-            sleep(1)
+            sleep(5)
     
     def wait_to_close(self):
         self._logging_thread.join()

@@ -55,6 +55,7 @@ class Torrent:
         
         # End threads
         self._peer_manager.terminate()
+        self._peer_manager.wait_to_close()
     
     def _create_final_files(self):
 
@@ -84,26 +85,26 @@ class Torrent:
             peer = self._peer_manager.get_peer()
             if peer is None:
                 continue
-
+            
+            peer_ip, peer_port = peer.split(":")
+            
             """
             We have reached a valid state for download to start
             """
-            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer), name=peer["ip"]))
+            threads.append(threading.Thread(target=self._download_piece, args=(own_peer_id, peer_ip, peer_port), name=peer_ip))
             threads[-1].start()
 
         [thread.join() for thread in threads]
 
-    def _download_piece(self, own_peer_id, peer):
+    def _download_piece(self, own_peer_id, peer_ip, peer_port):
 
         piece_to_download = None
 
         try:
-            # Retrieve IP to connect (assuming every IP has all files)
-            peer_ip, peer_port = peer["ip"], peer["port"]
 
             # Get Connection
             conn = Network.Network.get_socket(peer_ip)
-            conn.connect((peer_ip, peer_port))
+            conn.connect((peer_ip, int(peer_port)))
             logging.log(logging.INFO, f"Connected to {peer_ip}:{peer_port}")
 
             # Send Handshake and receive
@@ -179,7 +180,6 @@ class Torrent:
                 if piece_to_download.hash.hex() != hash.hexdigest():
                     print(f"{peer_ip} : Hashes do not match")
                     self._pieces.put_back(piece_to_download)
-                    self._peers.put(peer)
                     return
 
                 with open(self._tmpfile, "r+b") as file:
@@ -192,9 +192,9 @@ class Torrent:
                     finally:
                         self.file_mutex.release()
 
-            self._peers.put(peer)
             conn.close()
-        except Exception:
+        except Exception as e:
+            print(e)
             if piece_to_download is not None:
                 self._pieces.put_back(piece_to_download)
 
