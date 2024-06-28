@@ -63,6 +63,7 @@ class Torrent:
                 )
             )
             threads[-1].start()
+            break # TODO(DELETE AFTER TEST)
 
         [thread.join() for thread in threads]
 
@@ -76,9 +77,7 @@ class Torrent:
             logging.log(logging.INFO, f"Connected to {peer_ip}:{peer_port}")
 
             # Send Handshake and receive
-            handshake = Connection.build_handshake(
-                self._metadata.info_hash(), own_peer_id
-            )
+            handshake = Connection.build_handshake(self._metadata.info_hash(), own_peer_id)
             self._network.send_data(conn, handshake)
             _ = self._network.receive_data_with_length(conn, len(handshake))
             logging.log(logging.INFO, "Handshake sent and received")
@@ -88,52 +87,67 @@ class Torrent:
             self._network.send_data(conn, interested)
             logging.log(logging.INFO, "Interested sent")
 
-            # Current State
+            # Receive bitfield
+            received_data = self._network.receive_data(conn)
+            _, bitfield, payload = Connection.parse_peer_message(received_data)
+            logging.log(logging.INFO, f"Received bitfield {bitfield == 5}")
+            bitfield = list(bin(int(payload.hex(), base=16))[2:]) if bitfield == 5 else []
+            
+            if len(bitfield) == 0:
+                logging.log(logging.INFO, "Peer has no pieces. Leaving them")
+                conn.close()
+                return
+
             current_state = "chocked"
 
-            # Download Pieces
-            while not self._pieces.download_complete():
-                # Retrieve the next piece to download
-                piece_to_download = self._pieces.get_next_piece()
-                total_piece = b""
+            # Try to download a piece the user has and we don't
+            while True:
 
-                for block_pieces in piece_to_download.blocks:
-                    # Helper variables
-                    piece_id = block_pieces.piece_id
-                    piece_offset = block_pieces.block_id * 2**14
-                    piece_size = block_pieces.block_size
+                # Get a piece to download
+                piece_to_download = self._pieces.get_next_piece(bitfield)
+                if piece_to_download is None:
+                    logging.log(logging.INFO, "No piece to download. Leaving")
+                    break
+
+                current_piece = b""
+                # Send requests
+
+                for block in piece_to_download.blocks:
+                    piece_id = block.piece_id
+                    piece_offset = block.block_id * 2**14
+                    piece_size = block.block_size
 
                     # Build piece request
                     piece_req = Connection.build_request_piece(piece_id, piece_offset, piece_size)
                     data, current_state = self._download_block(conn, piece_req, current_state)
-                    total_piece += data
+                    current_piece += data
 
-                # Downloaded all the blocks from the piece
-                hash = sha1(total_piece)
-
-                if piece_to_download.hash.hex() != hash.hexdigest():
-                    print(f"{peer_ip} : Hashes do not match")
+                # Check if the piece is valid
+                if sha1(current_piece).hexdigest() == piece_to_download.hash.hex():
+                    logging.log(logging.INFO, f"Piece {piece_to_download.piece_id} is valid. Writing it to disk")
+                    self._file_manager.write(piece_to_download.offset, current_piece)
+                    #self._pieces.mark_piece_as_downloaded(piece_to_download.piece_id)
+                else:
+                    logging.log(logging.ERROR, f"Piece {piece_to_download.piece_id} is invalid. Putting it back")
                     self._pieces.put_back(piece_to_download)
-                    return
+ 
 
-                self._file_manager.write(piece_to_download.offset, total_piece)
 
-            conn.close()
         except Exception as e:
             if piece_to_download is not None:
-                logging.log(
-                    logging.ERROR,
-                    f"Error downloading piece {piece_to_download.piece_id} from {peer_ip}. {e}",
-                )
+                logging.log(logging.ERROR, f"Error downloading piece {piece_to_download.piece_id} from {peer_ip}. {e}")
                 self._pieces.put_back(piece_to_download)
             else:
-                logging.log(
-                    logging.ERROR, f"Error downloading piece from {peer_ip}. {e}"
-                )
+                logging.log(logging.ERROR, f"Error downloading piece from {peer_ip}. {e}")
+
+
+
+
 
     def _download_block(self, conn, piece_req, current_state):
         # Completed
         requested_piece = False
+
 
         while True:
             if not requested_piece and current_state != "chocked":

@@ -63,9 +63,3 @@ def build_interested():
 
 def build_not_interested():
     return (3).to_bytes()
-
-
-def build_request(index, begin, length):
-    req = bytearray()
-
-    req += index

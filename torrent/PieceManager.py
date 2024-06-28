@@ -73,7 +73,7 @@ class PieceManager:
             q.put(piece)
         return q
 
-    def get_next_piece(self):
+    def get_next_piece(self, bitfield):
         return self._download_queue.get()
 
     def put_back(self, piece):
