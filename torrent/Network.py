@@ -45,7 +45,6 @@ class Network:
         self.data = self.data[length:]
         return message
 
-
     def _recv_data(self, conn):
 
         tmp =  conn.recv(2**14)

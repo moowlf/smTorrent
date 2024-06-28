@@ -23,7 +23,7 @@ logging.basicConfig(
 # Output the torrent information
 def output_torrent_information_to_console():
 
-    #os.system("clear" if os.name == "posix" else "cls")
+    os.system("clear" if os.name == "posix" else "cls")
 
     # ==== Torrents =====
     cols = (120 - len(" Torrents ")) // 2
