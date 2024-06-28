@@ -56,25 +56,26 @@ class PeerManager:
 
             try:
                 req = requests.get(tracker_url, params)
+            
+                # Decode the answer and wait for next call
+                answer = bencode.decode_dictionary(req.content)[0]
+                sleep_interval = answer["interval"]
+                
+                # Add peers to the set
+                with self._lock:
+                    print(answer)
+                    if "peers" in answer:
+                        for peer in answer["peers"]:
+                            
+                            peer_addr = f"{peer['ip'].decode()}:{peer['port']}"
+                            if peer_addr in self._peers:
+                                continue
+                            
+                            self._peers[peer_addr] = len(self._peers_array)
+                            self._peers_array.append(peer_addr)
+            
             except Exception:
                 break
-
-            # Decode the answer and wait for next call
-            answer = bencode.decode_dictionary(req.content)[0]
-
-            # Add peers to the set
-            with self._lock:
-                for peer in answer["peers"]:
-                    
-                    peer_addr = f"{peer['ip'].decode()}:{peer['port']}"
-                    if peer_addr in self._peers:
-                        continue
-                    
-                    self._peers[peer_addr] = len(self._peers_array)
-                    self._peers_array.append(peer_addr)
-
-            # Sleep
-            sleep_interval = answer["interval"]
     
 
     def get_peer(self):

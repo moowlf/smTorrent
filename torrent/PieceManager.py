@@ -3,7 +3,7 @@ from typing import List
 from dataclasses import dataclass
 from queue import Queue
 
-from torrent.TorrentInformation import TorrentInformation
+from parser.TorrentInformation import TorrentInformation
 
 @dataclass
 class BlockPiece:

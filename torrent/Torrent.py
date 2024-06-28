@@ -78,12 +78,12 @@ class Torrent:
             handshake = Connection.build_handshake(self._metadata.info_hash(), own_peer_id)
             self._network.send_data(conn, handshake)
             _ = self._network.receive_data_with_length(conn, len(handshake))
-            logging.log(logging.INFO, f"Handshake sent and received")
+            logging.log(logging.INFO, "Handshake sent and received")
 
             # Send interested
             interested = Connection.build_interested()
             self._network.send_data(conn, interested)
-            logging.log(logging.INFO, f"Interested sent")
+            logging.log(logging.INFO, "Interested sent")
 
             # Download Piece
             current_state = "chocked"
@@ -153,9 +153,12 @@ class Torrent:
 
             conn.close()
         except Exception as e:
-            logging.log(logging.ERROR, f"Error downloading piece {piece_to_download.piece_id if piece_to_download else ""} from {peer_ip}. {e}")
+
             if piece_to_download is not None:
+                logging.log(logging.ERROR, f"Error downloading piece {piece_to_download.piece_id} from {peer_ip}. {e}")
                 self._pieces.put_back(piece_to_download)
+            else:
+                logging.log(logging.ERROR, f"Error downloading piece from {peer_ip}. {e}")
 
     def terminate(self):
         self._should_end = True
